@@ -21,8 +21,6 @@ Enterprise RAG Intelligence is a modular Retrieval-Augmented Generation (RAG) ap
 
 The project focuses on the engineering around RAG—not only the LLM call. It includes a page-aware ingestion pipeline, deterministic text chunking, local embedding generation, relational document metadata, vector persistence, lexical and semantic retrieval, Reciprocal Rank Fusion (RRF), a grounded generation prompt, REST endpoints, and a Streamlit interface.
 
-> **Design principle:** generated answers should be grounded in retrieved document passages. The application returns source metadata so a user can inspect where the evidence came from. Prompt instructions improve grounding, but they are not a formal guarantee; production deployments should add citation validation and evaluation.
-
 ## Product walkthrough
 
 The interface uses a restrained, nature-inspired visual system: warm ivory surfaces, forest-green actions, sage supporting tones, and muted terracotta accents. The aim is to feel like a practical knowledge-management workspace rather than a generic AI demo.
