@@ -21,6 +21,8 @@ Enterprise RAG Intelligence is a modular Retrieval-Augmented Generation (RAG) ap
 
 The project focuses on the engineering around RAG—not only the LLM call. It includes a page-aware ingestion pipeline, deterministic text chunking, local embedding generation, relational document metadata, vector persistence, lexical and semantic retrieval, Reciprocal Rank Fusion (RRF), a grounded generation prompt, REST endpoints, and a Streamlit interface.
 
+> **Design principle:** generated answers should be grounded in retrieved document passages. The application returns source metadata so a user can inspect where the evidence came from. Prompt instructions improve grounding, but they are not a formal guarantee; production deployments should add citation validation and evaluation.
+
 ## Product walkthrough
 
 The interface uses a restrained, nature-inspired visual system: warm ivory surfaces, forest-green actions, sage supporting tones, and muted terracotta accents. The aim is to feel like a practical knowledge-management workspace rather than a generic AI demo.
@@ -43,6 +45,7 @@ Ask questions against the indexed collection and expand the evidence panel to in
 
 ![Knowledge assistant screen](Knowledge%20Assistant.png)
 
+**Screenshot setup:** place the three image files in `docs/screenshots/` using the exact names shown in this section. The screenshot image files were not present in the source archive used for this update, so the README references are prepared but the actual images must be copied into that folder before the previews will render on GitHub.
 
 ## Key capabilities
 
@@ -151,12 +154,12 @@ Enterprise-RAG-Intelligence/
 │   └── main.py              # FastAPI application and lifespan startup
 ├── frontend/
 │   └── streamlit_app.py     # Streamlit interface
-├── Uploading Docs.png
-├── Uploaded Docs.png
-├── Knowledge Assitant.png
-├── .streamlit/              # Streamlit theme
-│   └── config.toml          # Configuration template
-├── .env.example             
+├── docs/
+│   ├── screenshots/        # README screenshots
+│   └── Enterprise_RAG_Project_Explainer.docx
+├── .streamlit/
+│   └── config.toml          # Streamlit theme
+├── .env.example             # Configuration template
 ├── .gitignore
 ├── Dockerfile
 ├── docker-compose.yml
@@ -304,6 +307,61 @@ These are useful checks to run against a small, known dataset. They are manual v
 | Ask an unsupported question | The system should respond that it cannot answer from the provided documents |
 | Delete a document | Document metadata and associated chunks are removed |
 
+## RAG evaluation
+
+The evaluation harness compares **vector**, **keyword (PostgreSQL full-text)**, and **hybrid (RRF)** retrieval using a labelled JSONL dataset.
+
+### Recorded benchmark
+
+<sub>Run: `rag_eval_20261112T121436_079845Z` · 12 November 2026 · 18 test cases · 3 ready documents / 23 chunks · top-K = 5 · Ollama `llama3.2` · `all-MiniLM-L6-v2` embeddings · RRF k = 60</sub>
+
+| Metric | Hybrid | Keyword | Vector |
+|---|---:|---:|---:|
+| Precision@5 | 0.213 | 0.040 | 0.213 |
+| Recall@5 | **0.967** | 0.200 | **0.967** |
+| MRR@5 | **1.000** | 0.200 | **1.000** |
+| nDCG@5 | **0.966** | 0.200 | **0.966** |
+| Document precision@5 | 0.522 | 0.200 | 0.522 |
+| Document recall@5 | **1.000** | 0.200 | **1.000** |
+| Reference token F1 | **0.423** | 0.081 | 0.393 |
+| Abstention accuracy | **1.000** | 0.333 | **1.000** |
+| LLM-judge correctness | **0.835** | 0.300 | 0.822 |
+| LLM-judge faithfulness | 0.757 | **0.900** | 0.687 |
+| LLM-judge relevance | 0.924 | 0.322 | **0.933** |
+| Mean retrieval latency | 80.5 ms | 69.5 ms | **26.4 ms** |
+| Mean successful generation latency | 16.75 s | 10.32 s* | 39.71 s |
+| Generation calls succeeded | 18/18 | 3/3 | 18/18 |
+
+**Interpretation:** hybrid and vector retrieval tied on the reported retrieval-ranking metrics. Hybrid achieved slightly higher reference token F1 and LLM-judge correctness than vector in this run, while vector retrieval had the lowest measured retrieval latency. Keyword retrieval performed poorly on this dataset and abstained on many answerable questions. Keyword generation metrics are based on only three successful generation attempts.
+
+**Metric caveats:**
+- Precision/recall/MRR/nDCG use evidence-phrase-labelled relevant chunks. MRR uses the rank of the first relevant chunk.
+- Reference token F1 is lexical overlap, not semantic equivalence. Context support is also a lexical proxy.
+- LLM-judge values are model-based estimates, not human-verified ground truth. One hybrid judge response failed JSON parsing; this was a judge-format failure, not an answer-generation failure.
+- Generation latency statistics include successful LLM calls only. The run recorded no answer-generation failures.
+- The dataset is small. Do not interpret these values as general performance guarantees or claim one strategy is universally best.
+
+*Keyword generation latency is based on only 3 successful calls; the other cases were abstained before generation.*
+
+### Run the evaluation
+
+With the virtual environment active and the database running:
+
+```powershell
+python -m unittest discover -s tests -p "test_*.py" -v
+python -m evaluation.ingest_sample_docs
+python -m evaluation.runner --retrieval-only --max-cases 5 --top-k 5
+python -m evaluation.runner --top-k 5
+```
+
+To include optional model-based judging:
+
+```powershell
+python -m evaluation.runner --top-k 5 --llm-judge
+```
+
+Reports are written under `evaluation/results/`. Keep the JSON report with the dataset version, source revision, and model configuration used for the run. Review per-case records and manually inspect retrieval misses before drawing conclusions.
+
 ## Engineering trade-offs and current limitations
 
 The project is intentionally a local, single-tenant demonstrator of a complete RAG workflow. The following limitations are explicit and should be addressed before public or production use:
@@ -314,7 +372,7 @@ The project is intentionally a local, single-tenant demonstrator of a complete R
 - **No managed migration history:** tables are created during application startup. Add Alembic migrations and a controlled schema deployment process.
 - **Local file storage:** uploaded files are stored on the API host/container volume. Multi-instance deployments should use object storage and durable object keys.
 - **Citation enforcement:** the model is prompted to cite supplied source IDs, but the response is not parsed against an allow-list of retrieved IDs. Add structured output and citation validation.
-- **Retrieval evaluation:** there is no automated benchmark for recall@k, MRR, answer faithfulness, or citation precision in the repository. Add a labelled evaluation set before tuning chunk sizes or retrieval weights.
+- **Retrieval evaluation:** an automated evaluation framework is included under `evaluation/`. The recorded sample benchmark uses 18 labelled questions, 3 documents, 23 chunks, and top-K = 5. Results are reported below; they are evidence for this dataset/database snapshot, not a universal quality score.
 - **Vector indexing:** the current schema stores pgvector embeddings but does not create an HNSW or IVFFlat index. Exact vector ordering is simpler for a small corpus; add and benchmark an approximate index as the collection grows.
 - **Language configuration:** lexical retrieval uses PostgreSQL's English text-search configuration. Multilingual collections need language-aware processing and evaluation.
 - **No reranker:** RRF merges two rankings but does not use a cross-encoder to rerank the fused candidates. A reranker is a possible quality improvement if evaluation shows it is needed.
